@@ -112,20 +112,23 @@ class MainPawWorker:
              if isfunction(o[1]) and hasattr(o[1], 'paw')]
         )
 
-        for task, func in tasks.items():
-            print("Registered: '{}'".format(func.name))
-            if func.description:
-                print('\t{}'.format(func.description))
+        for t, f in tasks.items():
+            print("REGISTERED '{}'".format(t))
+            if f.description:
+                print("\tdescription: '{}'".format(f.description))
+        print('\n')
         return tasks
 
     def start_workers(self):
         self.queue_service.create_queue(self.queue_name)
+
         while True:
             if not self.local_queue.full():
                 try:
                     msg = self.queue_service.get_messages(self.queue_name, 1)
                     if msg:
                         self.local_queue.put_nowait(msg[0])
+                        print('\tadded: {}'.format(msg[0].content['task_name']))
                 except Exception as e:
                     # TODO: Due to the chaotic nature of the azure package.
                     # TODO: Replace with proper catching once we figure it out
@@ -135,9 +138,8 @@ class MainPawWorker:
             time.sleep(5)
 
 
-def task(name, description=''):
+def task(description=''):
     def wrapper(func):
-        setattr(func, 'name', name)
         setattr(func, 'description', description)
         setattr(func, 'paw', True)
         return func
