@@ -67,10 +67,10 @@ class Worker(Process):
             self.log_to_table(result, exception)
 
     def delete_message(self):
-        print(self.azure_queue_name, self.msg['azure_id'],
-                               self.msg['pop_receipt'])
         self.qs.delete_message(self.azure_queue_name, self.msg['azure_id'],
                                self.msg['pop_receipt'])
+        print('DELETED!!!!!!!!!!!!!!!!!!!!')
+
 
     def log_to_table(self, result, exception):
         pass
@@ -200,7 +200,11 @@ class MainPawWorker:
 
             if not self.local_queue.full():
                 try:
-                    new_msg = self.queue_service.get_messages(self.queue_name, 1)
+                    new_msg = self.queue_service.get_messages(
+                        queue_name=self.queue_name,
+                        num_messages=1,
+                        visibility_timeout=60*60
+                    )
                     if new_msg:
                         msg = new_msg[0]
                         new_content = {
