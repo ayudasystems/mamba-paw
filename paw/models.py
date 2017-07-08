@@ -10,7 +10,6 @@ from azure.storage.queue import QueueService
 # noinspection PyPackageRequirements
 from azure.storage.table import TableService
 import traceback
-import ast
 
 
 class Worker(Process):
@@ -68,6 +67,8 @@ class Worker(Process):
             self.log_to_table(result, exception)
 
     def delete_message(self):
+        print(self.azure_queue_name, self.msg['azure_id'],
+                               self.msg['pop_receipt'])
         self.qs.delete_message(self.azure_queue_name, self.msg['azure_id'],
                                self.msg['pop_receipt'])
 
@@ -202,25 +203,11 @@ class MainPawWorker:
                     new_msg = self.queue_service.get_messages(self.queue_name, 1)
                     if new_msg:
                         msg = new_msg[0]
-                        pop = msg.pop_receipt
-
-                        # print(msg[0].pop_receipt, type(msg[0].pop_receipt))
-                        # pop = msg.pop_receipt
-                        # print(pop)
-                        # print(type(pop))
-                        # print(pop == msg[0].pop_receipt)
-                        # print(tuple(msg[0].pop_receipt)[0])
-
-                        content = json.loads(msg.content)
-                        print(content)
-                        content['pop_receipt'] = pop,
-                        print(content['pop_receipt'], content['pop_receipt'] == pop)
-
-                        content['azure_id'] = msg.id
-                        # del msg
-                        # del content
-                        # del pop
-                        continue
+                        new_content = {
+                            'pop_receipt': msg.pop_receipt,
+                            'azure_id': msg.id
+                        }
+                        content = {**json.loads(msg.content), **new_content}
                         self.local_queue.put_nowait(content)
                         print('\tadded: {}'.format(content))
 
