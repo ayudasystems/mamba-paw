@@ -9,6 +9,8 @@ import os
 from azure.storage.queue import QueueService
 # noinspection PyPackageRequirements
 from azure.storage.table import TableService
+import traceback
+import base64
 
 
 class Worker:
@@ -35,26 +37,27 @@ class Worker:
             finally:
                 self.delete_message(msg)
                 self.log_to_table(msg, result, exception_message)
-                print(exception_message, result)
+                print(exception_message, result,
+                      'TB\n:', traceback.format_exc())
             time.sleep(5)
 
     def run(self, msg):
         result = None
         exception = None
-        message = msg.content
+        # message = msg['content
 
-        task = self.tasks.get(message['task_name'])
-        if not task:
+        func = self.tasks.get(msg['task_name'])
+        if not func:
             raise Exception(
-                '{} is not a registered task.'.format(message['task_name']))
+                '{} is not a registered task.'.format(msg['task_name']))
 
         try:
-            if message['args']:
-                result = task(*message['args'])
-            elif message['kwargs']:
-                result = task(**message['kwargs'])
+            if msg['args']:
+                result = func(*msg['args'])
+            elif msg['kwargs']:
+                result = func(**msg['kwargs'])
             else:
-                result = task()
+                result = func()
         except Exception as e:
             exception = str(e)
         finally:
@@ -69,19 +72,36 @@ class Worker:
 
 
 class Message:
-    def __init__(self, task_name, args=None, kwargs=None):
+    def __init__(self, task_name, account_name, account_key, queue_name,
+                 args=None, kwargs=None):
+        self.queue_service = QueueService(account_name=account_name,
+                                          account_key=account_key)
+        self.queue_name = queue_name
         self.task_name = task_name
         self.args = args
         self.kwargs = kwargs
 
-    @property
-    def msg(self):
-        return json.dumps({
-            "task_name": self.task_name,
-            "args": self.args,
-            "kwargs": self.kwargs,
-            "id": str(uuid.uuid4())
-        })
+    def queue_message(self):
+        content = base64.b64encode(
+            json.dumps(
+                {
+                    "task_name": self.task_name,
+                    "args": self.args,
+                    "kwargs": self.kwargs,
+                    "id": str(uuid.uuid4())
+                }
+            ).encode()
+        ).decode()
+        # msg = self.queue_service.put_message(self.queue_name, content)
+        msg = self.queue_service.put_message(self.queue_name, json.dumps(
+                {
+                    "task_name": self.task_name,
+                    "args": self.args,
+                    "kwargs": self.kwargs,
+                    "id": str(uuid.uuid4())
+                }
+            ))
+        return msg.id
 
 
 class MainPawWorker:
@@ -127,12 +147,15 @@ class MainPawWorker:
                 try:
                     msg = self.queue_service.get_messages(self.queue_name, 1)
                     if msg:
-                        self.local_queue.put_nowait(msg[0])
-                        print('\tadded: {}'.format(msg[0].content['task_name']))
+                        content = json.loads(msg[0].content)
+                        # print('\t\t', content)
+                        self.local_queue.put_nowait(content)
+                        print('\tadded: {}'.format(content['task_name']))
                 except Exception as e:
                     # TODO: Due to the chaotic nature of the azure package.
                     # TODO: Replace with proper catching once we figure it out
-                    print("Error while getting message from Azure queue")
+                    print("Error while getting message from Azure queue",
+                          '\nTB:', traceback.format_exc())
                     print(e)
 
             time.sleep(5)
