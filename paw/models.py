@@ -2,7 +2,7 @@ import json
 import time
 import uuid
 from inspect import getmembers, isfunction
-from multiprocessing import Pool, Queue
+from multiprocessing import Pool, Queue, Process, current_process
 import os
 
 # noinspection PyPackageRequirements
@@ -10,10 +10,72 @@ from azure.storage.queue import QueueService
 # noinspection PyPackageRequirements
 from azure.storage.table import TableService
 import traceback
-import base64
+import ast
 
 
-class Worker:
+class Worker(Process):
+    def __init__(self, local_queue, queue_service, queue_name,
+                 table_service,
+                 tasks):
+        super(Worker, self).__init__()
+
+        self.local_queue = local_queue
+        self.qs = queue_service
+        self.ts = table_service
+        self.azure_queue_name = queue_name
+        self.tasks = tasks
+        self.msg = None
+
+    def start_working(self):
+        print('STARTING worker PID: {}'.format(os.getpid()))
+        while True:
+            self.msg = self.local_queue.get(True)
+            exception_message = None
+            result = None
+
+            try:
+                result = self.run()
+            except Exception as e:
+                exception_message = e
+            finally:
+                self.delete_message()
+                self.log_to_table(result, exception_message)
+                print(exception_message, result,
+                      'TB\n:', traceback.format_exc())
+            time.sleep(5)
+
+    def run(self):
+        result = None
+        exception = None
+        print(current_process().name, self.msg.get('task_name'))
+
+        func = self.tasks.get(self.msg['task_name'])
+        if not func:
+            raise Exception(
+                '{} is not a registered task.'.format(self.msg['task_name']))
+
+        try:
+            if self.msg['args']:
+                result = func(*self.msg['args'])
+            elif self.msg['kwargs']:
+                result = func(**self.msg['kwargs'])
+            else:
+                result = func()
+        except Exception as e:
+            exception = str(e)
+        finally:
+            self.delete_message()
+            self.log_to_table(result, exception)
+
+    def delete_message(self):
+        self.qs.delete_message(self.azure_queue_name, self.msg['azure_id'],
+                               self.msg['pop_receipt'])
+
+    def log_to_table(self, result, exception):
+        pass
+
+
+class _Worker:
     def __init__(self, local_queue, queue_service, queue_name, table_service,
                  tasks):
         self.local_queue = local_queue
@@ -82,25 +144,14 @@ class Message:
         self.kwargs = kwargs
 
     def queue_message(self):
-        content = base64.b64encode(
-            json.dumps(
-                {
-                    "task_name": self.task_name,
-                    "args": self.args,
-                    "kwargs": self.kwargs,
-                    "id": str(uuid.uuid4())
-                }
-            ).encode()
-        ).decode()
-        # msg = self.queue_service.put_message(self.queue_name, content)
-        msg = self.queue_service.put_message(self.queue_name, json.dumps(
-                {
-                    "task_name": self.task_name,
-                    "args": self.args,
-                    "kwargs": self.kwargs,
-                    "id": str(uuid.uuid4())
-                }
-            ))
+        content = json.dumps({
+            "task_name": self.task_name,
+            "args": self.args,
+            "kwargs": self.kwargs,
+            "id": str(uuid.uuid4())
+        })
+
+        msg = self.queue_service.put_message(self.queue_name, content)
         return msg.id
 
 
@@ -143,14 +194,36 @@ class MainPawWorker:
         self.queue_service.create_queue(self.queue_name)
 
         while True:
+            # for p in active_children():
+            #     print(p, dir(p))
+
             if not self.local_queue.full():
                 try:
-                    msg = self.queue_service.get_messages(self.queue_name, 1)
-                    if msg:
-                        content = json.loads(msg[0].content)
-                        # print('\t\t', content)
+                    new_msg = self.queue_service.get_messages(self.queue_name, 1)
+                    if new_msg:
+                        msg = new_msg[0]
+                        pop = msg.pop_receipt
+
+                        # print(msg[0].pop_receipt, type(msg[0].pop_receipt))
+                        # pop = msg.pop_receipt
+                        # print(pop)
+                        # print(type(pop))
+                        # print(pop == msg[0].pop_receipt)
+                        # print(tuple(msg[0].pop_receipt)[0])
+
+                        content = json.loads(msg.content)
+                        print(content)
+                        content['pop_receipt'] = pop,
+                        print(content['pop_receipt'], content['pop_receipt'] == pop)
+
+                        content['azure_id'] = msg.id
+                        # del msg
+                        # del content
+                        # del pop
+                        continue
                         self.local_queue.put_nowait(content)
-                        print('\tadded: {}'.format(content['task_name']))
+                        print('\tadded: {}'.format(content))
+
                 except Exception as e:
                     # TODO: Due to the chaotic nature of the azure package.
                     # TODO: Replace with proper catching once we figure it out
