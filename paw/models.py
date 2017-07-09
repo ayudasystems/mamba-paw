@@ -29,13 +29,40 @@ class Worker(Process):
         self.azure_queue_name = queue_name
         self.azure_table_name = table_name
         self.tasks = tasks
-        self.content = None
 
     def run(self):
         print('STARTING worker PID: {}'.format(os.getpid()))
         while True:
             content = self.local_queue.get(True)
-            # TODO: delete from queue
+            if not content:
+                raise Exception('Picked empty message from local queue')
+
+            func = self.tasks.get(content['task_name'])
+            try:
+                self.qs.delete_message(
+                    self.azure_queue_name,
+                    content['msg'].id,
+                    content['msg'].pop_receipt
+                )
+            except Exception:
+                if content['msg]'].dequeue_count > 5:
+                    # TODO: delete from table if too many dequeue
+                    pass
+                raise
+
+            if not func:
+                log_to_table(
+                    table_service=self.ts,
+                    table_name=self.azure_table_name,
+                    task_name=content['task_name'],
+                    status=FAILED,
+                    job_id=content['job_id'],
+                    result=None,
+                    exception='{} is not a registered task.'.format(
+                        content['task_name'])
+                )
+                continue
+
             log_to_table(
                 table_service=self.ts,
                 table_name=self.azure_table_name,
@@ -45,19 +72,8 @@ class Worker(Process):
                 result=None,
                 exception=None
             )
-            print(content)
             exception = None
             result = None
-
-            if not content:
-                raise Exception('Picked empty message from local queue')
-
-            func = self.tasks.get(content['task_name'])
-
-            if not func:
-                raise Exception(
-                    '{} is not a registered task.'.format(
-                        content['task_name']))
 
             try:
                 if content['args']:
@@ -69,7 +85,6 @@ class Worker(Process):
             except Exception:
                 exception = traceback.format_exc()
             finally:
-                print('FINALLY')
                 if exception:
                     status = FAILED
                 else:
@@ -96,13 +111,14 @@ class Message:
         self.task_name = task_name
         self.args = args
         self.kwargs = kwargs
+        self.job_id = str(uuid.uuid4())
 
     def queue_message(self):
         content = json.dumps({
             "task_name": self.task_name,
             "args": self.args,
             "kwargs": self.kwargs,
-            "job_id": str(uuid.uuid4())
+            "job_id": self.job_id
         })
 
         msg = self.queue_service.put_message(self.queue_name, content)
@@ -155,14 +171,18 @@ class MainPawWorker:
                     new_msg = self.queue_service.get_messages(
                         queue_name=self.queue_name,
                         num_messages=1,
-                        visibility_timeout=60*60
+                        visibility_timeout=5 * (60*60)
                     )
                     if new_msg:
                         msg = new_msg[0]
                         content = json.loads(msg.content)
-                        self.local_queue.put_nowait(json.loads(msg.content))
-                        self.queue_service.delete_message(
-                            self.queue_name, msg.id, msg.pop_receipt)
+                        content['msg'] = msg
+                        # self.local_queue.put_nowait(json.loads(msg.content))
+                        self.local_queue.put_nowait(content)
+                        # self.queue_service.delete_message(
+                        #     self.queue_name, msg.id, msg.pop_receipt)
+
+
                         # log_to_table(
                         #     table_service=self.table_service,
                         #     table_name=self.table_name,
