@@ -34,76 +34,57 @@ class Worker(Process):
     def run(self):
         print('STARTING worker PID: {}'.format(os.getpid()))
         while True:
-            self.content = self.local_queue.get(True)
-            exception_message = None
-            result = None
-
-            try:
-                result = self.exec()
-            except Exception:
-                exception_message = str(traceback.format_exc())
-            finally:
-                if exception_message:
-                    status = FAILED
-                else:
-                    status = SUCCESS
-                log_to_table(
-                    table_service=self.ts,
-                    table_name=self.azure_table_name,
-                    task_name=self.content['task_name'],
-                    status=status,
-                    job_id=self.content['job_id'],
-                    result=result,
-                    exception=exception_message
-                )
-                print(exception_message, result,
-                      'TB\n:', traceback.format_exc())
-            time.sleep(5)
-
-    def exec(self):
-        result = None
-        exception = None
-        # print(current_process().name, self.content.get('task_name'))
-
-        func = self.tasks.get(self.content['task_name'])
-        if not func:
-            raise Exception(
-                '{} is not a registered task.'.format(self.content['task_name']))
-
-        try:
-            if self.content['args']:
-                result = func(*self.content['args'])
-            elif self.content['kwargs']:
-                result = func(**self.content['kwargs'])
-            else:
-                result = func()
-        except Exception as e:
-            exception = str(e)
-        finally:
-            # self.delete_message()
-            if exception:
-                status = 'failed'
-            else:
-                status = 'success'
-
+            content = self.local_queue.get(True)
+            # TODO: delete from queue
             log_to_table(
                 table_service=self.ts,
                 table_name=self.azure_table_name,
-                task_name=self.content['task_name'],
-                status=status,
-                job_id=self.content['job_id'],
-                result=result,
-                exception=exception
+                task_name=content['task_name'],
+                status=RECEIVED,
+                job_id=content['job_id'],
+                result=None,
+                exception=None
             )
+            print(content)
+            exception = None
+            result = None
 
-    # def delete_message(self):
-    #     self.qs.delete_message(self.azure_queue_name, self.content['azure_id'],
-    #                            self.content['pop_receipt'])
-    #     print('DELETED!!!!!!!!!!!!!!!!!!!!')
+            if not content:
+                raise Exception('Picked empty message from local queue')
 
+            func = self.tasks.get(content['task_name'])
 
-    # def log_to_table(self, result, exception):
-    #     pass
+            if not func:
+                raise Exception(
+                    '{} is not a registered task.'.format(
+                        content['task_name']))
+
+            try:
+                if content['args']:
+                    result = func(*content['args'])
+                elif content['kwargs']:
+                    result = func(**content['kwargs'])
+                else:
+                    result = func()
+            except Exception:
+                exception = traceback.format_exc()
+            finally:
+                print('FINALLY')
+                if exception:
+                    status = FAILED
+                else:
+                    status = SUCCESS
+
+                log_to_table(
+                    table_service=self.ts,
+                    table_name=self.azure_table_name,
+                    task_name=content['task_name'],
+                    status=status,
+                    job_id=content['job_id'],
+                    result=result,
+                    exception=exception
+                )
+                print(os.getpid(), datetime.datetime.now(), 'Exception', exception, 'RESULT:', result)
 
 
 class Message:
@@ -182,16 +163,16 @@ class MainPawWorker:
                         self.local_queue.put_nowait(json.loads(msg.content))
                         self.queue_service.delete_message(
                             self.queue_name, msg.id, msg.pop_receipt)
-                        log_to_table(
-                            table_service=self.table_service,
-                            table_name=self.table_name,
-                            task_name=content['task_name'],
-                            status=RECEIVED,
-                            job_id=content['job_id']
-                        )
-                        print('\tadded: {}'.format(content))
+                        # log_to_table(
+                        #     table_service=self.table_service,
+                        #     table_name=self.table_name,
+                        #     task_name=content['task_name'],
+                        #     status=RECEIVED,
+                        #     job_id=content['job_id']
+                        # )
+                        # print('\tadded: {}'.format(content))
 
-                except Exception as e:
+                except Exception:
                     # TODO: Due to the chaotic nature of the azure package.
                     # TODO: Replace with proper catching once we figure it out
                     print("Error while getting message from Azure queue",
