@@ -2,7 +2,7 @@ import json
 import time
 import uuid
 from inspect import getmembers, isfunction
-from multiprocessing import Pool, Queue, Process, current_process
+from multiprocessing import Pool, Queue, Process
 import os
 import datetime
 # noinspection PyPackageRequirements
@@ -14,7 +14,7 @@ import traceback
 
 SUCCESS = 'SUCCESS'
 FAILED = 'FAILED'
-RECEIVED = 'RECEIVED'
+STARTED = 'STARTED'
 RETRY = 'RETRY'
 
 
@@ -59,7 +59,8 @@ class Worker(Process):
                     job_id=content['job_id'],
                     result=None,
                     exception='{} is not a registered task.'.format(
-                        content['task_name'])
+                        content['task_name']),
+                    create=True
                 )
                 continue
 
@@ -67,14 +68,16 @@ class Worker(Process):
                 table_service=self.ts,
                 table_name=self.azure_table_name,
                 task_name=content['task_name'],
-                status=RECEIVED,
+                status=STARTED,
                 job_id=content['job_id'],
                 result=None,
-                exception=None
+                exception=None,
+                create=True
             )
             exception = None
             result = None
 
+            # noinspection PyBroadException
             try:
                 if content['args']:
                     result = func(*content['args'])
@@ -99,7 +102,8 @@ class Worker(Process):
                     result=result,
                     exception=exception
                 )
-                print(os.getpid(), datetime.datetime.now(), 'Exception', exception, 'RESULT:', result)
+                print(os.getpid(), datetime.datetime.now(), 'Exception',
+                      exception, 'RESULT:', result)
 
 
 class Message:
@@ -121,8 +125,8 @@ class Message:
             "job_id": self.job_id
         })
 
-        msg = self.queue_service.put_message(self.queue_name, content)
-        return msg.id
+        self.queue_service.put_message(self.queue_name, content)
+        return self.job_id
 
 
 class MainPawWorker:
@@ -167,6 +171,7 @@ class MainPawWorker:
 
         while True:
             if not self.local_queue.full():
+                # noinspection PyBroadException
                 try:
                     new_msg = self.queue_service.get_messages(
                         queue_name=self.queue_name,
@@ -177,33 +182,19 @@ class MainPawWorker:
                         msg = new_msg[0]
                         content = json.loads(msg.content)
                         content['msg'] = msg
-                        # self.local_queue.put_nowait(json.loads(msg.content))
                         self.local_queue.put_nowait(content)
-                        # self.queue_service.delete_message(
-                        #     self.queue_name, msg.id, msg.pop_receipt)
-
-
-                        # log_to_table(
-                        #     table_service=self.table_service,
-                        #     table_name=self.table_name,
-                        #     task_name=content['task_name'],
-                        #     status=RECEIVED,
-                        #     job_id=content['job_id']
-                        # )
-                        # print('\tadded: {}'.format(content))
 
                 except Exception:
                     # TODO: Due to the chaotic nature of the azure package.
                     # TODO: Replace with proper catching once we figure it out
                     print("Error while getting message from Azure queue",
                           '\nTB:', traceback.format_exc())
-                    # print(e)
 
-            time.sleep(1)
+            time.sleep(5)
 
 
 def log_to_table(table_service, table_name, task_name, status, job_id,
-                 result=None, exception=None):
+                 result=None, exception=None, create=False):
     table_service.create_table(table_name)
 
     while table_name not in [t.name for t in table_service.list_tables()]:
@@ -219,7 +210,12 @@ def log_to_table(table_service, table_name, task_name, status, job_id,
     entity.status = status
     entity.result = result
     entity.exception = exception
-    table_service.insert_or_replace_entity(table_name, entity)
+    # TODO: Grab existin one, and update, mainting dequeue_time intact.
+    if create:
+        entity.dequeue_time = datetime.datetime.utcnow()
+        table_service.insert_entity(table_name, entity)
+
+    table_service.update_entity(table_name, entity)
 
 
 def task(description=''):
