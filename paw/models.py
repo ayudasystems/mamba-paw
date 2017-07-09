@@ -12,6 +12,12 @@ from azure.storage.table import TableService, Entity
 import traceback
 
 
+SUCCESS = 'SUCCESS'
+FAILED = 'FAILED'
+RECEIVED = 'RECEIVED'
+RETRY = 'RETRY'
+
+
 class Worker(Process):
     def __init__(self, local_queue, queue_service, queue_name,
                  table_service, table_name, tasks):
@@ -21,22 +27,35 @@ class Worker(Process):
         self.qs = queue_service
         self.ts = table_service
         self.azure_queue_name = queue_name
+        self.azure_table_name = table_name
         self.tasks = tasks
-        self.msg = None
+        self.content = None
 
     def run(self):
         print('STARTING worker PID: {}'.format(os.getpid()))
         while True:
-            self.msg = self.local_queue.get(True)
+            self.content = self.local_queue.get(True)
             exception_message = None
             result = None
 
             try:
                 result = self.exec()
-            except Exception as e:
-                exception_message = e
+            except Exception:
+                exception_message = str(traceback.format_exc())
             finally:
-                log_to_table(result, exception_message)
+                if exception_message:
+                    status = FAILED
+                else:
+                    status = SUCCESS
+                log_to_table(
+                    table_service=self.ts,
+                    table_name=self.azure_table_name,
+                    task_name=self.content['task_name'],
+                    status=status,
+                    job_id=self.content['job_id'],
+                    result=result,
+                    exception=exception_message
+                )
                 print(exception_message, result,
                       'TB\n:', traceback.format_exc())
             time.sleep(5)
@@ -44,18 +63,18 @@ class Worker(Process):
     def exec(self):
         result = None
         exception = None
-        print(current_process().name, self.msg.get('task_name'))
+        # print(current_process().name, self.content.get('task_name'))
 
-        func = self.tasks.get(self.msg['task_name'])
+        func = self.tasks.get(self.content['task_name'])
         if not func:
             raise Exception(
-                '{} is not a registered task.'.format(self.msg['task_name']))
+                '{} is not a registered task.'.format(self.content['task_name']))
 
         try:
-            if self.msg['args']:
-                result = func(*self.msg['args'])
-            elif self.msg['kwargs']:
-                result = func(**self.msg['kwargs'])
+            if self.content['args']:
+                result = func(*self.content['args'])
+            elif self.content['kwargs']:
+                result = func(**self.content['kwargs'])
             else:
                 result = func()
         except Exception as e:
@@ -67,11 +86,19 @@ class Worker(Process):
             else:
                 status = 'success'
 
-            log_to_table(self.ts, status, self.msg['id'], result=result, exception=exception)
+            log_to_table(
+                table_service=self.ts,
+                table_name=self.azure_table_name,
+                task_name=self.content['task_name'],
+                status=status,
+                job_id=self.content['job_id'],
+                result=result,
+                exception=exception
+            )
 
     # def delete_message(self):
-    #     self.qs.delete_message(self.azure_queue_name, self.msg['azure_id'],
-    #                            self.msg['pop_receipt'])
+    #     self.qs.delete_message(self.azure_queue_name, self.content['azure_id'],
+    #                            self.content['pop_receipt'])
     #     print('DELETED!!!!!!!!!!!!!!!!!!!!')
 
 
@@ -94,7 +121,7 @@ class Message:
             "task_name": self.task_name,
             "args": self.args,
             "kwargs": self.kwargs,
-            "id": str(uuid.uuid4())
+            "job_id": str(uuid.uuid4())
         })
 
         msg = self.queue_service.put_message(self.queue_name, content)
@@ -107,6 +134,7 @@ class MainPawWorker:
         self.account_name = azure_storage_name
         self.account_key = azure_storage_private_key
         self.queue_name = azure_queue_name
+        self.table_name = azure_table_name
         self.tasks_module = tasks_module
         self.workers = workers
         self.queue_service = QueueService(account_name=self.account_name,
@@ -119,6 +147,7 @@ class MainPawWorker:
             queue_service=self.queue_service,
             queue_name=self.queue_name,
             table_service=self.table_service,
+            table_name=azure_table_name,
             tasks=self._load_tasks()
         )
         self.pool = Pool(self.workers, self.worker_process.run, ())
@@ -140,9 +169,6 @@ class MainPawWorker:
         self.queue_service.create_queue(self.queue_name)
 
         while True:
-            # for p in active_children():
-            #     print(p, dir(p))
-
             if not self.local_queue.full():
                 try:
                     new_msg = self.queue_service.get_messages(
@@ -156,6 +182,13 @@ class MainPawWorker:
                         self.local_queue.put_nowait(json.loads(msg.content))
                         self.queue_service.delete_message(
                             self.queue_name, msg.id, msg.pop_receipt)
+                        log_to_table(
+                            table_service=self.table_service,
+                            table_name=self.table_name,
+                            task_name=content['task_name'],
+                            status=RECEIVED,
+                            job_id=content['job_id']
+                        )
                         print('\tadded: {}'.format(content))
 
                 except Exception as e:
@@ -163,29 +196,29 @@ class MainPawWorker:
                     # TODO: Replace with proper catching once we figure it out
                     print("Error while getting message from Azure queue",
                           '\nTB:', traceback.format_exc())
-                    print(e)
+                    # print(e)
 
-            time.sleep(5)
+            time.sleep(1)
 
 
-def log_to_table(ts, status, job_id, result=None, exception=None, update=False):
+def log_to_table(table_service, table_name, task_name, status, job_id,
+                 result=None, exception=None):
+    table_service.create_table(table_name)
+
+    while table_name not in [t.name for t in table_service.list_tables()]:
+        time.sleep(2)
+
     entity = Entity()
+    entity.PartitionKey = task_name
+    entity.RowKey = job_id
 
-    if not update:
-        entity.created = datetime.datetime.utcnow()
-    else:
-        entity.completed = datetime.datetime.utcnow()
+    if result:
+        result = repr(result)
 
     entity.status = status
-    entity.job_id = job_id
     entity.result = result
-    entity.result = exception
-
-
-
-
-
-
+    entity.exception = exception
+    table_service.insert_or_replace_entity(table_name, entity)
 
 
 def task(description=''):
