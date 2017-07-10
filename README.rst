@@ -1,54 +1,55 @@
+===============================
 mamba-paw (Python Azure Worker)
 ===============================
 
 Base project for the **paw** package. Very much a work in progress.
 
 
-To create tasks:
-```
-# tasks.py
+To create tasks::
 
-from paw import task
+    # tasks.py
 
-@task(description='Stupid simple example')
-def task_one(print_me):
-    print(print_me)
-    return True
+    from paw import task
 
-```
+    @task(description='Stupid simple example')
+    def task_one(print_me):
+        print(print_me)
+        return True
 
+----
 
-To start a worker:
-```
-# start_workers.py
+To start a worker::
 
-from paw import MainPawWorker
-import tasks  # importing tasks from tasks.py in local project
+    # start_workers.py
 
-workers = MainPawWorker(
-    azure_storage_name='storage account name',
-    azure_storage_private_key='storage account private key',
-    azure_queue_name='name of the queue',
-    azure_table_name='name of the table',
-    tasks_module=tasks,
-    workers=4
-)
+    from paw import MainPawWorker
+    import tasks  # importing tasks from tasks.py in local project
 
-workers.start_workers()
-```
+    workers = MainPawWorker(
+        azure_storage_name='storage account name',
+        azure_storage_private_key='storage account private key',
+        azure_queue_name='name of the queue',
+        azure_table_name='name of the table',
+        tasks_module=tasks,
+        workers=4
+    )
 
-To queue a task:
-```
-# queue_tasks.py
+    if __name__ == '__main__':
+        workers.start_workers()
 
-from paw import queue_task
+----
 
-queue_task(
-    task_name='task_one',
-    account_name='storage account name',
-    account_key='storage account private key',
-    queue_name='name of the queue',
-    args=['List', 'of', 'arguments'],
-    kwargs={'Key_word': 'arguments'}
-)
-```
+To queue a task::
+
+    # queue_tasks.py
+
+    from paw import queue_task
+
+    queue_task(
+        task_name='task_one',
+        account_name='storage account name',
+        account_key='storage account private key',
+        queue_name='name of the queue',
+        args=['List', 'of', 'arguments'],
+        kwargs={'Key_word': 'arguments'}
+    )
