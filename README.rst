@@ -19,7 +19,6 @@ To create tasks:
         print(print_me)
         return True
 
-----
 
 To start a worker:
 
@@ -43,7 +42,6 @@ To start a worker:
     if __name__ == '__main__':
         workers.start_workers()
 
-----
 
 To queue a task:
 
