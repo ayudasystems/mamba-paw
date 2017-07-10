@@ -5,7 +5,10 @@ mamba-paw (Python Azure Worker)
 Base project for the **paw** package. Very much a work in progress.
 
 
-To create tasks::
+To create tasks:
+
+
+.. code:: python
 
     # tasks.py
 
@@ -18,7 +21,10 @@ To create tasks::
 
 ----
 
-To start a worker::
+To start a worker:
+
+
+.. code:: python
 
     # start_workers.py
 
@@ -39,7 +45,10 @@ To start a worker::
 
 ----
 
-To queue a task::
+To queue a task:
+
+
+.. code:: python
 
     # queue_tasks.py
 
