@@ -15,13 +15,13 @@ setup(
     # Versions should comply with PEP440.  For a discussion on single-sourcing
     # the version across setup.py and the project code, see
     # https://packaging.python.org/en/latest/single_source_version.html
-    version='0.0.1',
+    version='0.1.0',
 
     description='Uses Azure storage queue/table for a simple worker',
     long_description=long_description,
 
     # The project's main homepage.
-    url='https://github.com/pypa/sampleproject',
+    url='https://github.com/ayudasystems/mamba-paw',
 
     # Author details
     author='Maxime Lapointe',
@@ -40,7 +40,7 @@ setup(
 
         # Indicate who your project is intended for
         'Intended Audience :: Developers',
-        'Topic :: Software Development :: Queue/worker',
+        'Topic :: Software Development :: Queue/Worker',
 
         # Pick your license as you wish (should match "license" above)
         'License :: Ayuda Media Systems Inc.',

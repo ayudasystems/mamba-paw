@@ -1,26 +1,43 @@
 import json
-import time
-import uuid
-from inspect import getmembers, isfunction
-from multiprocessing import Pool, Queue, Process
+import logging
+import logging.config
 import os
-import datetime
+import time
+import traceback
+from inspect import getmembers, isfunction
+from multiprocessing import Pool, Process, Queue
+
 # noinspection PyPackageRequirements
 from azure.storage.queue import QueueService
 # noinspection PyPackageRequirements
-from azure.storage.table import TableService, Entity
-import traceback
+from azure.storage.table import TableService
 
+from .utils import log_to_table
 
 SUCCESS = 'SUCCESS'
 FAILED = 'FAILED'
 STARTED = 'STARTED'
 RETRY = 'RETRY'
 
+logging_ini = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), 'logging.ini'
+)
+logging.config.fileConfig(logging_ini)
+
 
 class Worker(Process):
+    """Process that get sent to the Pool and consumes from the Queue"""
     def __init__(self, local_queue, queue_service, queue_name,
-                 table_service, table_name, tasks):
+                 table_service, table_name, tasks, logger):
+        """
+        :param local_queue: multiprocessing.Queue
+        :param queue_service: azure.storage.queue.QueueService
+        :param queue_name: Name of the Azure queue to use
+        :param table_service: azure.storage.table.TableService
+        :param table_name: Name of the Azure table to use
+        :param tasks: Dict of tasks {"task_name": Function Object}
+        :param logger: Instantiated logger object
+        """
         super(Worker, self).__init__()
 
         self.local_queue = local_queue
@@ -29,9 +46,18 @@ class Worker(Process):
         self.azure_queue_name = queue_name
         self.azure_table_name = table_name
         self.tasks = tasks
+        self.logger = logger
 
     def run(self):
-        print('STARTING worker PID: {}'.format(os.getpid()))
+        """ Loops to pick tasks in the local queue.
+            Once a message is picked, it execute the corresponding task.
+            Takes care of deleting from the queue and logging the result to
+            Azure table.
+        """
+        self.logger.info(
+            'STARTING worker PID: {}'.format(os.getpid())
+        )
+
         while True:
             content = self.local_queue.get(True)
             if not content:
@@ -45,9 +71,15 @@ class Worker(Process):
                     content['msg'].pop_receipt
                 )
             except Exception:
-                if content['msg]'].dequeue_count > 5:
-                    # TODO: delete from table if too many dequeue
-                    pass
+                # Deleting table entity to try to keep it clean. The job is
+                # still in the queue but could not be deleted. Could means it
+                # expired, already deleted, or re-queued etc...
+                #
+                # This should not happen, so we're still re-raising the
+                # exception,
+                self.ts.delete_entity(self.azure_table_name,
+                                      content['task_name'],
+                                      content['job_id'])
                 raise
 
             if not func:
@@ -64,6 +96,7 @@ class Worker(Process):
                 )
                 continue
 
+            # Logging STARTED to table storage.
             log_to_table(
                 table_service=self.ts,
                 table_name=self.azure_table_name,
@@ -102,36 +135,24 @@ class Worker(Process):
                     result=result,
                     exception=exception
                 )
-                print(os.getpid(), datetime.datetime.now(), 'Exception',
-                      exception, 'RESULT:', result)
-
-
-class Message:
-    def __init__(self, task_name, account_name, account_key, queue_name,
-                 args=None, kwargs=None):
-        self.queue_service = QueueService(account_name=account_name,
-                                          account_key=account_key)
-        self.queue_name = queue_name
-        self.task_name = task_name
-        self.args = args
-        self.kwargs = kwargs
-        self.job_id = str(uuid.uuid4())
-
-    def queue_message(self):
-        content = json.dumps({
-            "task_name": self.task_name,
-            "args": self.args,
-            "kwargs": self.kwargs,
-            "job_id": self.job_id
-        })
-
-        self.queue_service.put_message(self.queue_name, content)
-        return self.job_id
+                self.logger.info(
+                    'ExceptionP {} | Result: {}'.format(exception, result)
+                )
 
 
 class MainPawWorker:
+    """Main class to use for running a worker. call start_workers() to start.
+    """
     def __init__(self, azure_storage_name, azure_storage_private_key,
                  azure_queue_name, azure_table_name, tasks_module, workers):
+        """
+        :param azure_storage_name: Name of Azure storage account
+        :param azure_storage_private_key: Private key of Azure storage account.
+        :param azure_queue_name: Name of the Azure queue to use.
+        :param azure_table_name: Name of the Azure table to use.
+        :param tasks_module: Module containing decorated functions to load from.
+        :param workers: Int of workers. Ex: 4
+        """
         self.account_name = azure_storage_name
         self.account_key = azure_storage_private_key
         self.queue_name = azure_queue_name
@@ -143,30 +164,41 @@ class MainPawWorker:
         self.table_service = TableService(account_name=self.account_name,
                                           account_key=self.account_key)
         self.local_queue = Queue(self.workers)
+        self.logger = logging.getLogger()
+
         self.worker_process = Worker(
             local_queue=self.local_queue,
             queue_service=self.queue_service,
             queue_name=self.queue_name,
             table_service=self.table_service,
             table_name=azure_table_name,
-            tasks=self._load_tasks()
+            tasks=self._load_tasks(),
+            logger=self.logger
         )
         self.pool = Pool(self.workers, self.worker_process.run, ())
 
     def _load_tasks(self):
+        """Loads and returns decorated functions from a given modules, as a
+           dict
+        """
         tasks = dict(
             [o for o in getmembers(self.tasks_module)
              if isfunction(o[1]) and hasattr(o[1], 'paw')]
         )
 
         for t, f in tasks.items():
-            print("REGISTERED '{}'".format(t))
+            self.logger.info("REGISTERED '{}'".format(t))
             if f.description:
-                print("\tdescription: '{}'".format(f.description))
-        print('\n')
+                self.logger.info("\tdescription: '{}'".format(f.description))
+
         return tasks
 
     def start_workers(self):
+        """
+           Starts workers and picks message from the Azure queue. On new
+           message, when the local queue has room, the message is placed for a
+           worker to pick-up
+        """
         self.queue_service.create_queue(self.queue_name)
 
         while True:
@@ -181,46 +213,30 @@ class MainPawWorker:
                     if new_msg:
                         msg = new_msg[0]
                         content = json.loads(msg.content)
+
+                        if msg.dequeue_count > 5:
+                            log_to_table(
+                                table_service=self.table_service,
+                                table_name=self.table_name,
+                                task_name=content['task_name'],
+                                status=FAILED,
+                                job_id=content['job_id'],
+                                result="PAW MESSAGE: Dequeue count exceeded.",
+                            )
+                            self.queue_service.delete_message(
+                                self.queue_name,
+                                msg.id,
+                                msg.pop_receipt
+                            )
+                            continue
+
                         content['msg'] = msg
                         self.local_queue.put_nowait(content)
 
                 except Exception:
-                    # TODO: Due to the chaotic nature of the azure package.
-                    # TODO: Replace with proper catching once we figure it out
-                    print("Error while getting message from Azure queue",
-                          '\nTB:', traceback.format_exc())
+                    self.logger.critical(
+                        "Error while getting message from Azure queue",
+                        '\nTB:', traceback.format_exc()
+                    )
 
             time.sleep(5)
-
-
-def log_to_table(table_service, table_name, task_name, status, job_id,
-                 result=None, exception=None, create=False):
-    table_service.create_table(table_name)
-
-    while table_name not in [t.name for t in table_service.list_tables()]:
-        time.sleep(2)
-
-    entity = Entity()
-    entity.PartitionKey = task_name
-    entity.RowKey = job_id
-
-    if result:
-        result = repr(result)
-
-    entity.status = status
-    entity.result = result
-    entity.exception = exception
-    # TODO: Grab existin one, and update, mainting dequeue_time intact.
-    if create:
-        entity.dequeue_time = datetime.datetime.utcnow()
-        table_service.insert_entity(table_name, entity)
-
-    table_service.update_entity(table_name, entity)
-
-
-def task(description=''):
-    def wrapper(func):
-        setattr(func, 'description', description)
-        setattr(func, 'paw', True)
-        return func
-    return wrapper
