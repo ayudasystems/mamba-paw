@@ -93,6 +93,7 @@ class Worker(Process):
         while True:
             content = self.local_queue.get(True)
             if not content:
+                self.logger.critical('Picked empty message from local queue')
                 raise Exception('Picked empty message from local queue')
 
             func = self.tasks.get(content['task_name'])
@@ -103,6 +104,7 @@ class Worker(Process):
                     content['msg'].pop_receipt
                 )
             except Exception:
+                self.logger.critical(traceback.format_exc())
                 # Deleting table entity to try to keep it clean. The job is
                 # still in the queue but could not be deleted. Could means it
                 # expired, already deleted, or re-queued etc...
@@ -112,7 +114,7 @@ class Worker(Process):
                 self.ts.delete_entity(self.azure_table_name,
                                       content['task_name'],
                                       content['job_id'])
-                raise
+                continue
 
             if not func:
                 log_to_table(
