@@ -19,10 +19,42 @@ FAILED = 'FAILED'
 STARTED = 'STARTED'
 RETRY = 'RETRY'
 
-logging_ini = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), 'logging.ini'
-)
-logging.config.fileConfig(logging_ini)
+LOGGING_DICT = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'standard': {
+            'format': '%(asctime)s [%(levelname)s] %(name)s: %(message)s'
+        },
+    },
+    'handlers': {
+        'default': {
+            'level': 'INFO',
+            'formatter': 'standard',
+            'class': 'logging.StreamHandler',
+            'stream': 'ext://sys.stdout',
+
+        },
+    },
+    'loggers': {
+        '': {
+            'handlers': ['default'],
+            'level': 'INFO',
+            'propagate': True
+        },
+    }
+}
+
+
+
+
+
+
+# logging_ini = os.path.join(
+#     os.path.dirname(os.path.abspath(__file__)), 'logging.ini'
+# )
+logging.config.dictConfig(LOGGING_DICT)
+# logging.config.fileConfig(logging_ini)
 
 
 class Worker(Process):
