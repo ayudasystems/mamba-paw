@@ -24,7 +24,8 @@ LOGGING_DICT = {
     'disable_existing_loggers': False,
     'formatters': {
         'standard': {
-            'format': '%(asctime)s [%(levelname)s] %(name)s: %(message)s'
+            'format': ('%(asctime)s [%(levelname)s] %(hostname)s '
+                       'pid:%(process)d : %(message)s')
         },
     },
     'handlers': {
@@ -45,16 +46,7 @@ LOGGING_DICT = {
     }
 }
 
-
-
-
-
-
-# logging_ini = os.path.join(
-#     os.path.dirname(os.path.abspath(__file__)), 'logging.ini'
-# )
 logging.config.dictConfig(LOGGING_DICT)
-# logging.config.fileConfig(logging_ini)
 
 
 class Worker(Process):
@@ -169,7 +161,8 @@ class Worker(Process):
                     result=result,
                     exception=exception
                 )
-                self.logger.info(
+
+                self.logger.debug(
                     'ExceptionP {} | Result: {}'.format(exception, result)
                 )
 
