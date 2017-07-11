@@ -24,8 +24,7 @@ LOGGING_DICT = {
     'disable_existing_loggers': False,
     'formatters': {
         'standard': {
-            'format': ('%(asctime)s [%(levelname)s] %(hostname)s '
-                       'pid:%(process)d : %(message)s')
+            'format': '%(asctime)s [%(levelname)s] : %(message)s'
         },
     },
     'handlers': {
