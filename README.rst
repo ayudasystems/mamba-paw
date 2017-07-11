@@ -4,6 +4,10 @@ mamba-paw (Python Azure Worker)
 
 Base project for the **paw** package. Very much a work in progress.
 
+To add it to your requirements.txt:
+
+git+git://github.com/ayudasystems/mamba-paw@master#egg=mamba-paw
+
 
 To create tasks:
 
