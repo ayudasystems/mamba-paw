@@ -7,6 +7,11 @@ from azure.common import AzureException, AzureHttpError
 from azure.storage.queue import QueueService
 from azure.storage.table import Entity
 
+import logging
+import traceback
+
+LOGGER = logging.getLogger(__name__)
+
 
 def log_to_table(table_service, table_name, task_name, status, job_id,
                  result=None, exception=None, create=False):
@@ -27,6 +32,7 @@ def log_to_table(table_service, table_name, task_name, status, job_id,
             table_service.create_table(table_name, fail_on_exist=True)
         except AzureHttpError:
             break
+        LOGGER.info("Waiting for table to be ready")
         time.sleep(2)
 
     entity = Entity()
@@ -48,10 +54,13 @@ def log_to_table(table_service, table_name, task_name, status, job_id,
     while retries:
         try:
             table_service.insert_or_merge_entity(table_name, entity)
+            break
         except AzureException:
             retries -= 1
             if not retries:
                 raise
+            LOGGER.error("Error from Azure table service: "
+                         "{}".format(traceback.format_exc()))
             time.sleep(2)
 
 

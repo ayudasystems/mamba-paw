@@ -19,17 +19,26 @@ SUCCESS = 'SUCCESS'
 FAILED = 'FAILED'
 STARTED = 'STARTED'
 RETRY = 'RETRY'
+
+LOGGER_LEVEL = 'INFO'
+
+if LOGGER_LEVEL == 'DEBUG':
+    FORMAT = ('%(asctime)s [%(levelname)s] (([%(pathname)s] [%(module)s] '
+              '[%(funcName)s] [%(lineno)d ])): %(message)s')
+else:
+    FORMAT = '%(asctime)s [%(levelname)s] : %(message)s'
+
 LOGGING_DICT = {
     'version': 1,
     'disable_existing_loggers': False,
     'formatters': {
         'standard': {
-            'format': '%(asctime)s [%(levelname)s] : %(message)s'
+            'format': FORMAT
         },
     },
     'handlers': {
         'default': {
-            'level': 'INFO',
+            'level': LOGGER_LEVEL,
             'formatter': 'standard',
             'class': 'logging.StreamHandler',
             'stream': 'ext://sys.stdout',
@@ -39,7 +48,7 @@ LOGGING_DICT = {
     'loggers': {
         '': {
             'handlers': ['default'],
-            'level': 'INFO',
+            'level': LOGGER_LEVEL,
             'propagate': True
         },
     }
@@ -77,9 +86,7 @@ class Worker(Process):
             Takes care of deleting from the queue and logging the result to
             Azure table.
         """
-        self.logger.info(
-            'STARTING worker PID: {}'.format(os.getpid())
-        )
+        self.logger.info('STARTING worker PID: {}'.format(os.getpid()))
 
         while True:
             content = self.local_queue.get(True)
@@ -164,7 +171,7 @@ class Worker(Process):
                 )
 
                 self.logger.debug(
-                    'ExceptionP {} | Result: {}'.format(exception, result)
+                    'Exception {}\n Result: {}'.format(exception, result)
                 )
 
     def delete_from_queue(self, msg_id, pop_receipt, task_name, job_id):
@@ -185,6 +192,8 @@ class Worker(Process):
                 )
             except AzureMissingResourceHttpError:
                 pass
+            self.logger.debug("Deleting from queue failed. {}",
+                              traceback.format_exc())
             return False
 
 
@@ -213,6 +222,8 @@ class MainPawWorker:
                                           account_key=self.account_key)
         self.local_queue = Queue(self.workers)
         self.logger = logging.getLogger()
+
+        self.logger.info("\nPAW Python Azure Worker starting..\n.")
 
         self.worker_process = Worker(
             local_queue=self.local_queue,
@@ -268,7 +279,18 @@ class MainPawWorker:
                     try:
                         content = json.loads(msg.content)
                     except json.JSONDecodeError:
-                        self.logger.critical(traceback.format_exc())
+                        self.logger.critical(
+                            'Json error {}'.format(traceback.format_exc()))
+                        try:
+                            self.queue_service.delete_message(
+                                queue_name=self.queue_name,
+                                message_id=msg.id,
+                                pop_receipt=msg.pop_receipt
+                            )
+                        except AzureException:
+                            self.logger.critical(
+                                'Deleting invalid message from queue failed: '
+                                '{}'.format(traceback.format_exc()))
                         time.sleep(5)
                         continue
 
@@ -290,5 +312,7 @@ class MainPawWorker:
 
                     content['msg'] = msg
                     self.local_queue.put_nowait(content)
+                    self.logger.info('ADDING: {}'.format(content['task_name']))
+                    continue
 
             time.sleep(5)
