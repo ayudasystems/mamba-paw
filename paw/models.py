@@ -13,14 +13,18 @@ from azure.storage.queue import QueueService
 # noinspection PyPackageRequirements
 from azure.storage.table import TableService
 
-from .utils import log_to_table
+from .utils import log_to_table, PAW_LOGO
 
 SUCCESS = 'SUCCESS'
 FAILED = 'FAILED'
 STARTED = 'STARTED'
 RETRY = 'RETRY'
 
-LOGGER_LEVEL = 'INFO'
+log_level = os.getenv('DEBUGLEVEL')
+if log_level:
+    LOGGER_LEVEL = log_level.upper()
+else:
+    LOGGER_LEVEL = 'DEBUG'
 
 if LOGGER_LEVEL == 'DEBUG':
     FORMAT = ('%(asctime)s [%(levelname)s] (([%(pathname)s] [%(module)s] '
@@ -223,7 +227,7 @@ class MainPawWorker:
         self.local_queue = Queue(self.workers)
         self.logger = logging.getLogger()
 
-        self.logger.info("\nPAW Python Azure Worker starting..\n.")
+        self.logger.info(PAW_LOGO)
 
         self.worker_process = Worker(
             local_queue=self.local_queue,
@@ -312,7 +316,7 @@ class MainPawWorker:
 
                     content['msg'] = msg
                     self.local_queue.put_nowait(content)
-                    self.logger.info('ADDING: {}'.format(content['task_name']))
+                    self.logger.debug('ADDING: {}'.format(content['task_name']))
                     continue
 
             time.sleep(5)

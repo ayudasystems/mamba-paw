@@ -11,6 +11,30 @@ import logging
 import traceback
 
 LOGGER = logging.getLogger(__name__)
+PAW_LOGO = """
+=======================
+= Python Azure Worker =
+=======================
+   _  _       
+ _(_)(_)
+(_).--.(_)
+  /    \\
+  \    /  _  _
+   '--' _(_)(_)_
+       (_).--.(_)
+         /    \\
+   _  _  \    /
+ _(_)(_)_ '--'
+(_).--.(_)
+  /    \\
+  \    /  _  _
+   '--' _(_)(_)_
+       (_).--.(_)
+         /    \\
+         \    /
+          '--'
+
+"""
 
 
 def log_to_table(table_service, table_name, task_name, status, job_id,
