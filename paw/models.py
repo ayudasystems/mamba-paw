@@ -24,7 +24,7 @@ log_level = os.getenv('DEBUGLEVEL')
 if log_level:
     LOGGER_LEVEL = log_level.upper()
 else:
-    LOGGER_LEVEL = 'DEBUG'
+    LOGGER_LEVEL = 'INFO'
 
 if LOGGER_LEVEL == 'DEBUG':
     FORMAT = ('%(asctime)s [%(levelname)s] (([%(pathname)s] [%(module)s] '
@@ -77,10 +77,10 @@ class Worker(Process):
         super(Worker, self).__init__()
 
         self.local_queue = local_queue
-        self.qs = queue_service
-        self.ts = table_service
-        self.azure_queue_name = queue_name
-        self.azure_table_name = table_name
+        self.queue_service = queue_service
+        self.table_service = table_service
+        self.queue_name = queue_name
+        self.table_name = table_name
         self.tasks = tasks
         self.logger = logger
 
@@ -121,8 +121,8 @@ class Worker(Process):
                 self.logger.critical('{} is not a registered task.'.format(
                         content['task_name']))
                 log_to_table(
-                    table_service=self.ts,
-                    table_name=self.azure_table_name,
+                    table_service=self.table_service,
+                    table_name=self.table_name,
                     task_name=content['task_name'],
                     status=FAILED,
                     job_id=content['job_id'],
@@ -135,8 +135,8 @@ class Worker(Process):
 
             # Logging STARTED to table storage.
             log_to_table(
-                table_service=self.ts,
-                table_name=self.azure_table_name,
+                table_service=self.table_service,
+                table_name=self.table_name,
                 task_name=content['task_name'],
                 status=STARTED,
                 job_id=content['job_id'],
@@ -165,8 +165,8 @@ class Worker(Process):
                     status = SUCCESS
 
                 log_to_table(
-                    table_service=self.ts,
-                    table_name=self.azure_table_name,
+                    table_service=self.table_service,
+                    table_name=self.table_name,
                     task_name=content['task_name'],
                     status=status,
                     job_id=content['job_id'],
@@ -180,8 +180,8 @@ class Worker(Process):
 
     def delete_from_queue(self, msg_id, pop_receipt, task_name, job_id):
         try:
-            self.qs.delete_message(
-                queue_name=self.azure_queue_name,
+            self.queue_service.delete_message(
+                queue_name=self.queue_name,
                 message_id=msg_id,
                 pop_receipt=pop_receipt
             )
@@ -189,8 +189,8 @@ class Worker(Process):
         except AzureMissingResourceHttpError:
             # Message doesn't exist. Cleaning table.
             try:
-                self.ts.delete_entity(
-                    table_name=self.azure_table_name,
+                self.table_service.delete_entity(
+                    table_name=self.table_name,
                     partition_key=task_name,
                     row_key=job_id
                 )
@@ -273,8 +273,10 @@ class MainPawWorker:
                         visibility_timeout=5 * (60*60)
                     )
                 except AzureException:
-                    self.logger.critical("Error while getting message "
-                                         "from Azure queue")
+                    self.logger.error("Error while getting message "
+                                      "from Azure queue. Trying to create "
+                                      "the queue")
+                    self.queue_service.create_queue(self.queue_name)
                     time.sleep(5)
                     continue
 

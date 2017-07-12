@@ -16,7 +16,7 @@ PAW_LOGO = """
 = Python Azure Worker =
 =======================
    _  _       
- _(_)(_)
+ _(_)(_)_
 (_).--.(_)
   /    \\
   \    /  _  _
@@ -101,7 +101,7 @@ def task(description=''):
 
 
 def queue_task(task_name, account_name, account_key, queue_name, args=None,
-               kwargs=None):
+               kwargs=None, retries=30):
     """Sends messages into the Azure queue.
 
     :param task_name: Name of the task to queue.
@@ -110,11 +110,26 @@ def queue_task(task_name, account_name, account_key, queue_name, args=None,
     :param queue_name: Name of the Azure queue
     :param args: List of arguments to pass to the task.
     :param kwargs: Dict of arguments to pass to the task
+    :param retries: Int of how many times to retry. 1 second wait per try
 
     :returns: Job ID for this task.
     """
+    if args and kwargs:
+        raise Exception("You can't pass both positional and keyword arguments")
+
     queue_service = QueueService(account_name=account_name,
                                  account_key=account_key)
+
+    while retries:
+        try:
+            queue_service.create_queue(queue_name, fail_on_exist=True)
+        except AzureException:
+            break
+        retries -= 1
+        if not retries:
+            raise Exception('Too many retries creating the queue.')
+        time.sleep(1)
+
     job_id = str(uuid.uuid4())
     content = json.dumps({
         "task_name": task_name,
@@ -123,4 +138,5 @@ def queue_task(task_name, account_name, account_key, queue_name, args=None,
         "job_id": job_id
     })
     queue_service.put_message(queue_name, content)
+
     return job_id
