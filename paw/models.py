@@ -7,6 +7,7 @@ import traceback
 from inspect import getmembers, isfunction
 from multiprocessing import Pool, Process, Queue
 
+from azure.common import AzureException, AzureMissingResourceHttpError
 # noinspection PyPackageRequirements
 from azure.storage.queue import QueueService
 # noinspection PyPackageRequirements
@@ -18,7 +19,6 @@ SUCCESS = 'SUCCESS'
 FAILED = 'FAILED'
 STARTED = 'STARTED'
 RETRY = 'RETRY'
-
 LOGGING_DICT = {
     'version': 1,
     'disable_existing_loggers': False,
@@ -83,31 +83,32 @@ class Worker(Process):
 
         while True:
             content = self.local_queue.get(True)
+
             if not content:
                 self.logger.critical('Picked empty message from local queue')
-                raise Exception('Picked empty message from local queue')
+                self.delete_from_queue(
+                    msg_id=content['msg'].id,
+                    pop_receipt=content['msg'].pop_receipt,
+                    task_name=content['task_name'],
+                    job_id=content['job_id']
+                )
+                continue
 
             func = self.tasks.get(content['task_name'])
-            try:
-                self.qs.delete_message(
-                    self.azure_queue_name,
-                    content['msg'].id,
-                    content['msg'].pop_receipt
+            deleted = self.delete_from_queue(
+                    msg_id=content['msg'].id,
+                    pop_receipt=content['msg'].pop_receipt,
+                    task_name=content['task_name'],
+                    job_id=content['job_id']
                 )
-            except Exception:
-                self.logger.critical(traceback.format_exc())
-                # Deleting table entity to try to keep it clean. The job is
-                # still in the queue but could not be deleted. Could means it
-                # expired, already deleted, or re-queued etc...
-                #
-                # This should not happen, so we're still re-raising the
-                # exception,
-                self.ts.delete_entity(self.azure_table_name,
-                                      content['task_name'],
-                                      content['job_id'])
+
+            if not deleted:
+                self.logger.critical('Message and/or entity missing. Aborting.')
                 continue
 
             if not func:
+                self.logger.critical('{} is not a registered task.'.format(
+                        content['task_name']))
                 log_to_table(
                     table_service=self.ts,
                     table_name=self.azure_table_name,
@@ -135,6 +136,7 @@ class Worker(Process):
             exception = None
             result = None
 
+            # Grabbing any exception caused by the task.
             # noinspection PyBroadException
             try:
                 if content['args']:
@@ -164,6 +166,26 @@ class Worker(Process):
                 self.logger.debug(
                     'ExceptionP {} | Result: {}'.format(exception, result)
                 )
+
+    def delete_from_queue(self, msg_id, pop_receipt, task_name, job_id):
+        try:
+            self.qs.delete_message(
+                queue_name=self.azure_queue_name,
+                message_id=msg_id,
+                pop_receipt=pop_receipt
+            )
+            return True
+        except AzureMissingResourceHttpError:
+            # Message doesn't exist. Cleaning table.
+            try:
+                self.ts.delete_entity(
+                    table_name=self.azure_table_name,
+                    partition_key=task_name,
+                    row_key=job_id
+                )
+            except AzureMissingResourceHttpError:
+                pass
+            return False
 
 
 class MainPawWorker:
@@ -229,40 +251,44 @@ class MainPawWorker:
 
         while True:
             if not self.local_queue.full():
-                # noinspection PyBroadException
                 try:
                     new_msg = self.queue_service.get_messages(
                         queue_name=self.queue_name,
                         num_messages=1,
                         visibility_timeout=5 * (60*60)
                     )
-                    if new_msg:
-                        msg = new_msg[0]
+                except AzureException:
+                    self.logger.critical("Error while getting message "
+                                         "from Azure queue")
+                    time.sleep(5)
+                    continue
+
+                if new_msg:
+                    msg = new_msg[0]
+                    try:
                         content = json.loads(msg.content)
+                    except json.JSONDecodeError:
+                        self.logger.critical(traceback.format_exc())
+                        time.sleep(5)
+                        continue
 
-                        if msg.dequeue_count > 5:
-                            log_to_table(
-                                table_service=self.table_service,
-                                table_name=self.table_name,
-                                task_name=content['task_name'],
-                                status=FAILED,
-                                job_id=content['job_id'],
-                                result="PAW MESSAGE: Dequeue count exceeded.",
-                            )
-                            self.queue_service.delete_message(
-                                self.queue_name,
-                                msg.id,
-                                msg.pop_receipt
-                            )
-                            continue
+                    if msg.dequeue_count > 5:
+                        log_to_table(
+                            table_service=self.table_service,
+                            table_name=self.table_name,
+                            task_name=content['task_name'],
+                            status=FAILED,
+                            job_id=content['job_id'],
+                            result="PAW MESSAGE: Dequeue count exceeded.",
+                        )
+                        self.queue_service.delete_message(
+                            self.queue_name,
+                            msg.id,
+                            msg.pop_receipt
+                        )
+                        continue
 
-                        content['msg'] = msg
-                        self.local_queue.put_nowait(content)
-
-                except Exception:
-                    self.logger.critical(
-                        "Error while getting message from Azure queue",
-                        '\nTB:', traceback.format_exc()
-                    )
+                    content['msg'] = msg
+                    self.local_queue.put_nowait(content)
 
             time.sleep(5)

@@ -3,6 +3,7 @@ import json
 import time
 import uuid
 
+from azure.common import AzureException, AzureHttpError
 from azure.storage.queue import QueueService
 from azure.storage.table import Entity
 
@@ -21,9 +22,11 @@ def log_to_table(table_service, table_name, task_name, status, job_id,
     :param create: Bool. Adds the created date. Used to keep it even after
                    updating an existing row.
     """
-    table_service.create_table(table_name)
-
-    while table_name not in [t.name for t in table_service.list_tables()]:
+    while True:
+        try:
+            table_service.create_table(table_name, fail_on_exist=True)
+        except AzureHttpError:
+            break
         time.sleep(2)
 
     entity = Entity()
@@ -36,10 +39,20 @@ def log_to_table(table_service, table_name, task_name, status, job_id,
     entity.status = status
     entity.result = result
     entity.exception = exception
+
     if create:
         entity.dequeue_time = datetime.datetime.utcnow()
 
-    table_service.insert_or_merge_entity(table_name, entity)
+    retries = 60
+
+    while retries:
+        try:
+            table_service.insert_or_merge_entity(table_name, entity)
+        except AzureException:
+            retries -= 1
+            if not retries:
+                raise
+            time.sleep(2)
 
 
 def task(description=''):
