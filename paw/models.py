@@ -253,6 +253,8 @@ class MainPawWorker:
             self.logger.info("REGISTERED '{}'".format(t))
             if f.description:
                 self.logger.info("\tdescription: '{}'".format(f.description))
+        if not tasks:
+            self.logger.warning("No tasks found...")
 
         return tasks
 
