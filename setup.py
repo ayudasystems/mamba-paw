@@ -28,7 +28,7 @@ setup(
     author_email='maxime@ayudasystems.com',
 
     # Choose your license
-    license='Ayuda Media Systems Inc.',
+    license='Apache License 2.0',
 
     # See https://pypi.python.org/pypi?%3Aaction=list_classifiers
     classifiers=[
@@ -40,10 +40,10 @@ setup(
 
         # Indicate who your project is intended for
         'Intended Audience :: Developers',
-        'Topic :: Software Development :: Queue/Worker',
+        'Topic :: Software Development',
 
         # Pick your license as you wish (should match "license" above)
-        'License :: Ayuda Media Systems Inc.',
+        # 'License :: Apache License 2.0',
 
         # Specify the Python versions you support here. In particular, ensure
         # that you indicate whether you support Python 2, Python 3 or both.
@@ -98,4 +98,5 @@ setup(
     #         'sample=sample:main',
     #     ],
     # },
+    python_requires='>=3.5'
 )
