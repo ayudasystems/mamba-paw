@@ -258,11 +258,12 @@ class MainPawWorker:
 
         return tasks
 
-    def start_workers(self):
+    def start_workers(self, sleep_for=5):
         """
            Starts workers and picks message from the Azure queue. On new
            message, when the local queue has room, the message is placed for a
            worker to pick-up
+           :param sleep_for: Seconds to sleep for after a loop end.
         """
         self.queue_service.create_queue(self.queue_name)
 
@@ -279,7 +280,7 @@ class MainPawWorker:
                                       "from Azure queue. Trying to create "
                                       "the queue")
                     self.queue_service.create_queue(self.queue_name)
-                    time.sleep(5)
+                    time.sleep(sleep_for)
                     continue
 
                 if new_msg:
@@ -299,7 +300,7 @@ class MainPawWorker:
                             self.logger.critical(
                                 'Deleting invalid message from queue failed: '
                                 '{}'.format(traceback.format_exc()))
-                        time.sleep(5)
+                        time.sleep(sleep_for)
                         continue
 
                     if msg.dequeue_count > 5:
@@ -323,4 +324,4 @@ class MainPawWorker:
                     self.logger.debug('ADDING: {}'.format(content['task_name']))
                     continue
 
-            time.sleep(5)
+            time.sleep(sleep_for)
