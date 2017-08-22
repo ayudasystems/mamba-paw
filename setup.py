@@ -3,6 +3,10 @@ from setuptools import setup
 from codecs import open
 from os import path
 
+# Basics of pushing a new version:
+# >> python3 setup.py sdist
+# >> twine upload dist/*
+
 here = path.abspath(path.dirname(__file__))
 
 # Get the long description from the README file
@@ -11,7 +15,7 @@ with open(path.join(here, 'README.rst'), encoding='utf-8') as f:
 
 setup(
     name='mamba-paw',
-    version='0.1.2',
+    version='0.1.3',
     packages=['paw'],
     url='https://github.com/ayudasystems/mamba-paw',
     license='Apache 2.0',
