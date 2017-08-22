@@ -4,7 +4,10 @@ from codecs import open
 from os import path
 
 # Basics of pushing a new version:
+# - Change version in setup()
+# - Clean dist/ folder
 # >> python3 setup.py sdist
+# >> python3 setup.py bdist_wheel
 # >> twine upload dist/*
 
 here = path.abspath(path.dirname(__file__))
@@ -15,7 +18,7 @@ with open(path.join(here, 'README.rst'), encoding='utf-8') as f:
 
 setup(
     name='mamba-paw',
-    version='0.1.3',
+    version='0.1.4',
     packages=['paw'],
     url='https://github.com/ayudasystems/mamba-paw',
     license='Apache 2.0',
