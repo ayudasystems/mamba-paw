@@ -5,7 +5,7 @@ import uuid
 
 from azure.common import AzureException, AzureHttpError
 from azure.storage.queue import QueueService
-from azure.storage.table import Entity
+from azure.storage.table import Entity, EntityProperty, EdmType
 
 import logging
 import traceback
@@ -62,12 +62,13 @@ def log_to_table(table_service, table_name, task_name, status, job_id,
     entity = Entity()
     entity.PartitionKey = task_name
     entity.RowKey = job_id
+    entity.status = status
 
     if result:
-        result = repr(result)
+        # Results are added in this manner because Azure SDK's serializer fails
+        # when results are repr(list).
+        entity.result = EntityProperty(type=EdmType.STRING, value=repr(result))
 
-    entity.status = status
-    entity.result = result
     entity.exception = exception
 
     if create:
