@@ -1,12 +1,12 @@
 import json
 import logging
-import logging.config
 import os
 import time
 import traceback
 from inspect import getmembers, isfunction
 from multiprocessing import Pool, Process, Queue
 
+# noinspection PyPackageRequirements
 from azure.common import AzureException, AzureMissingResourceHttpError
 # noinspection PyPackageRequirements
 from azure.storage.queue import QueueService
@@ -14,51 +14,15 @@ from azure.storage.queue import QueueService
 from azure.storage.table import TableService
 
 from .utils import log_to_table, PAW_LOGO
+from .exceptions import PawError
 
 SUCCESS = 'SUCCESS'
 FAILED = 'FAILED'
 STARTED = 'STARTED'
 RETRY = 'RETRY'
 
-log_level = os.getenv('DEBUGLEVEL')
-if log_level:
-    LOGGER_LEVEL = log_level.upper()
-else:
-    LOGGER_LEVEL = 'INFO'
-
-if LOGGER_LEVEL == 'DEBUG':
-    FORMAT = ('%(asctime)s [%(levelname)s] (([%(pathname)s] [%(module)s] '
-              '[%(funcName)s] [%(lineno)d ])): %(message)s')
-else:
-    FORMAT = '%(asctime)s [%(levelname)s] : %(message)s'
-
-LOGGING_DICT = {
-    'version': 1,
-    'disable_existing_loggers': False,
-    'formatters': {
-        'standard': {
-            'format': FORMAT
-        },
-    },
-    'handlers': {
-        'default': {
-            'level': LOGGER_LEVEL,
-            'formatter': 'standard',
-            'class': 'logging.StreamHandler',
-            'stream': 'ext://sys.stdout',
-
-        },
-    },
-    'loggers': {
-        '': {
-            'handlers': ['default'],
-            'level': LOGGER_LEVEL,
-            'propagate': True
-        },
-    }
-}
-
-logging.config.dictConfig(LOGGING_DICT)
+VISIBILITY_TIMEOUT = 5 * (60*60)
+MAXIMUM_VISIBILITY_TIMEOUT = 7 * ((60 * 60) * 24)
 
 
 class Worker(Process):
@@ -85,10 +49,11 @@ class Worker(Process):
         self.logger = logger
 
     def run(self):
-        """ Loops to pick tasks in the local queue.
-            Once a message is picked, it execute the corresponding task.
-            Takes care of deleting from the queue and logging the result to
-            Azure table.
+        """
+        Loops to pick tasks in the local queue.
+        Once a message is picked, it execute the corresponding task.
+        Takes care of deleting from the queue and logging the result to
+        Azure table.
         """
         self.logger.info('STARTING worker PID: {}'.format(os.getpid()))
 
@@ -202,10 +167,12 @@ class Worker(Process):
 
 
 class MainPawWorker:
-    """Main class to use for running a worker. call start_workers() to start.
+    """
+    Main class to use for running a worker. call start_workers() to start.
     """
     def __init__(self, azure_storage_name, azure_storage_private_key,
-                 azure_queue_name, azure_table_name, tasks_module, workers):
+                 azure_queue_name, azure_table_name, tasks_module, workers,
+                 visibility_timeout=VISIBILITY_TIMEOUT):
         """
         :param azure_storage_name: Name of Azure storage account
         :param azure_storage_private_key: Private key of Azure storage account.
@@ -213,6 +180,7 @@ class MainPawWorker:
         :param azure_table_name: Name of the Azure table to use.
         :param tasks_module: Module containing decorated functions to load from.
         :param workers: Int of workers. Ex: 4
+        :param visibility_timeout: Seconds in int to keep message in Azure queue
         """
         self.account_name = azure_storage_name
         self.account_key = azure_storage_private_key
@@ -220,6 +188,11 @@ class MainPawWorker:
         self.table_name = azure_table_name
         self.tasks_module = tasks_module
         self.workers = workers
+        self.visibility_timeout = visibility_timeout
+
+        if self.visibility_timeout > MAXIMUM_VISIBILITY_TIMEOUT:
+            raise PawError('self.visibility_timeout bigger than allowed limit')
+
         self.queue_service = QueueService(account_name=self.account_name,
                                           account_key=self.account_key)
         self.table_service = TableService(account_name=self.account_name,
@@ -241,8 +214,8 @@ class MainPawWorker:
         self.pool = Pool(self.workers, self.worker_process.run, ())
 
     def _load_tasks(self):
-        """Loads and returns decorated functions from a given modules, as a
-           dict
+        """
+        Loads and returns decorated functions from a given modules, as a dict
         """
         tasks = dict(
             [o for o in getmembers(self.tasks_module)
@@ -260,10 +233,10 @@ class MainPawWorker:
 
     def start_workers(self, sleep_for=5):
         """
-           Starts workers and picks message from the Azure queue. On new
-           message, when the local queue has room, the message is placed for a
-           worker to pick-up
-           :param sleep_for: Seconds to sleep for after a loop end.
+        Starts workers and picks message from the Azure queue. On new
+        message, when the local queue has room, the message is placed for a
+        worker to pick-up
+        :param sleep_for: Seconds to sleep for after a loop end.
         """
         self.queue_service.create_queue(self.queue_name)
 
@@ -273,7 +246,7 @@ class MainPawWorker:
                     new_msg = self.queue_service.get_messages(
                         queue_name=self.queue_name,
                         num_messages=1,
-                        visibility_timeout=5 * (60*60)
+                        visibility_timeout=self.visibility_timeout
                     )
                 except AzureException:
                     self.logger.error("Error while getting message "

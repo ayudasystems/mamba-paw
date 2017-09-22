@@ -1,14 +1,20 @@
 import datetime
 import json
+import logging
+import socket
+import string
 import time
+import traceback
 import uuid
 
+# noinspection PyPackageRequirements
 from azure.common import AzureException, AzureHttpError
+# noinspection PyPackageRequirements
 from azure.storage.queue import QueueService
-from azure.storage.table import Entity, EntityProperty, EdmType
+# noinspection PyPackageRequirements
+from azure.storage.table import EdmType, Entity, EntityProperty
 
-import logging
-import traceback
+from .exceptions import PawError
 
 LOGGER = logging.getLogger(__name__)
 PAW_LOGO = """
@@ -39,7 +45,8 @@ PAW_LOGO = """
 
 def log_to_table(table_service, table_name, task_name, status, job_id,
                  result=None, exception=None, create=False):
-    """Logs to table service the status/result of a task
+    """
+    Logs to table service the status/result of a task
 
     :param table_service: azure.storage.table.TableService
     :param table_name: Name of the Azure table to use.
@@ -67,6 +74,7 @@ def log_to_table(table_service, table_name, task_name, status, job_id,
     if result:
         # Results are added in this manner because Azure SDK's serializer fails
         # when results are repr(list).
+        # noinspection PyTypeChecker
         entity.result = EntityProperty(type=EdmType.STRING, value=repr(result))
 
     entity.exception = exception
@@ -80,10 +88,10 @@ def log_to_table(table_service, table_name, task_name, status, job_id,
         try:
             table_service.insert_or_merge_entity(table_name, entity)
             break
-        except AzureException:
+        except AzureException as e:
             retries -= 1
             if not retries:
-                raise
+                raise PawError(e)
             LOGGER.error("Error from Azure table service: "
                          "{}".format(traceback.format_exc()))
             time.sleep(2)
@@ -91,8 +99,8 @@ def log_to_table(table_service, table_name, task_name, status, job_id,
 
 def task(description=''):
     """
-       Decorator used to identify tasks to load from a module. A description
-       can optionally be given.
+    Decorator used to identify tasks to load from a module. A description
+    can optionally be given.
     """
     def wrapper(func):
         setattr(func, 'description', description)
@@ -103,7 +111,8 @@ def task(description=''):
 
 def queue_task(task_name, account_name, account_key, queue_name, args=None,
                kwargs=None, retries=30):
-    """Sends messages into the Azure queue.
+    """
+    Sends messages into the Azure queue.
 
     :param task_name: Name of the task to queue.
     :param account_name: Name of the Azure account with the queue.
@@ -116,7 +125,7 @@ def queue_task(task_name, account_name, account_key, queue_name, args=None,
     :returns: Job ID for this task.
     """
     if args and kwargs:
-        raise Exception("You can't pass both positional and keyword arguments")
+        raise PawError("You can't pass both positional and keyword arguments")
 
     queue_service = QueueService(account_name=account_name,
                                  account_key=account_key)
@@ -128,7 +137,7 @@ def queue_task(task_name, account_name, account_key, queue_name, args=None,
             break
         retries -= 1
         if not retries:
-            raise Exception('Too many retries creating the queue.')
+            raise PawError('Too many retries creating the queue.')
         time.sleep(1)
 
     job_id = str(uuid.uuid4())
@@ -141,3 +150,30 @@ def queue_task(task_name, account_name, account_key, queue_name, args=None,
     queue_service.put_message(queue_name, content)
 
     return job_id
+
+
+def generate_name_from_hostname():
+    """
+    Generates a name based on hostname. Validates that it is valid to use as
+    queue or table name on Azure Storage.
+
+    It is assumed that your run all your instances of paw.MainWorker under
+    hosts that are unique.
+
+    :return: Valid name for Azure Table and Queue based on hostname
+    """
+    LOGGER.debug('It is assumed that your run all your instances of '
+                 'paw.MainWorker under hosts that are unique.')
+    hostname = socket.gethostname()
+    cleaned_hostname = ''.join(
+        [l for l in hostname if l not in string.punctuation]).lower()[:63]
+
+    if len(cleaned_hostname) < 3:
+        raise PawError('Cannot generate name from hostname. '
+                       '"{}" is not valid'.format(cleaned_hostname))
+
+    if cleaned_hostname.isnumeric():
+        raise PawError('Cannot use all number name. '
+                       '"{}"'.format(cleaned_hostname))
+
+    return cleaned_hostname

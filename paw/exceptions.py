@@ -1,0 +1,2 @@
+class PawError(Exception):
+    pass

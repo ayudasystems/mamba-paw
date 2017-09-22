@@ -18,7 +18,7 @@ with open(path.join(here, 'README.rst'), encoding='utf-8') as f:
 
 setup(
     name='mamba-paw',
-    version='0.1.4',
+    version='0.1.5',
     packages=['paw'],
     url='https://github.com/ayudasystems/mamba-paw',
     license='Apache 2.0',
