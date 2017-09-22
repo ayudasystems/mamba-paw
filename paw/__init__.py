@@ -3,7 +3,8 @@ import logging.config
 import os
 
 from .models import MainPawWorker
-from .utils import task, queue_task, generate_name_from_hostname
+from .utils import (create_table_if_missing, generate_name_from_hostname,
+                    queue_task, task)
 from . import exceptions
 
 log_level = os.getenv('DEBUGLEVEL')

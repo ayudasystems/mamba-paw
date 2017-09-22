@@ -21,7 +21,7 @@ PAW_LOGO = """
 =======================
 = Python Azure Worker =
 =======================
-   _  _       
+   _  _ 
  _(_)(_)_
 (_).--.(_)
   /    \\
@@ -39,8 +39,17 @@ PAW_LOGO = """
          /    \\
          \    /
           '--'
-
 """
+
+
+def create_table_if_missing(table_service, table_name):
+    while True:
+        try:
+            table_service.create_table(table_name, fail_on_exist=True)
+        except AzureHttpError:
+            break
+        LOGGER.info("Waiting for table to be ready")
+        time.sleep(2)
 
 
 def log_to_table(table_service, table_name, task_name, status, job_id,
@@ -58,14 +67,7 @@ def log_to_table(table_service, table_name, task_name, status, job_id,
     :param create: Bool. Adds the created date. Used to keep it even after
                    updating an existing row.
     """
-    while True:
-        try:
-            table_service.create_table(table_name, fail_on_exist=True)
-        except AzureHttpError:
-            break
-        LOGGER.info("Waiting for table to be ready")
-        time.sleep(2)
-
+    create_table_if_missing(table_service, table_name)
     entity = Entity()
     entity.PartitionKey = task_name
     entity.RowKey = job_id

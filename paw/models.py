@@ -13,8 +13,8 @@ from azure.storage.queue import QueueService
 # noinspection PyPackageRequirements
 from azure.storage.table import TableService
 
-from .utils import log_to_table, PAW_LOGO
 from .exceptions import PawError
+from .utils import PAW_LOGO, create_table_if_missing, log_to_table
 
 SUCCESS = 'SUCCESS'
 FAILED = 'FAILED'
@@ -24,6 +24,7 @@ LOST_WORKER = 'LOST WORKER'
 
 VISIBILITY_TIMEOUT = 5 * (60*60)
 MAXIMUM_VISIBILITY_TIMEOUT = 7 * ((60 * 60) * 24)
+MAXIMUM_DEQUEUE_COUNT = 5
 
 
 class Worker(Process):
@@ -240,6 +241,7 @@ class MainPawWorker:
         :param sleep_for: Seconds to sleep for after a loop end.
         """
         self.queue_service.create_queue(self.queue_name)
+        create_table_if_missing(self.table_service, self.table_name)
 
         try:
             self.logger.info("Cleaning up dead jobs left in {}".format(STARTED))
@@ -276,6 +278,7 @@ class MainPawWorker:
                     time.sleep(sleep_for)
                     continue
 
+                # TODO: Check if we could check in missing new_msg instead
                 if new_msg:
                     msg = new_msg[0]
                     try:
@@ -296,7 +299,7 @@ class MainPawWorker:
                         time.sleep(sleep_for)
                         continue
 
-                    if msg.dequeue_count > 5:
+                    if msg.dequeue_count > MAXIMUM_DEQUEUE_COUNT:
                         log_to_table(
                             table_service=self.table_service,
                             table_name=self.table_name,
@@ -315,6 +318,8 @@ class MainPawWorker:
                     content['msg'] = msg
                     self.local_queue.put_nowait(content)
                     self.logger.debug('ADDING: {}'.format(content['task_name']))
+
+                    # Skipping sleep on success
                     continue
 
             time.sleep(sleep_for)
