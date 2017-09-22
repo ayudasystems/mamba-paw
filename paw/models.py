@@ -20,6 +20,7 @@ SUCCESS = 'SUCCESS'
 FAILED = 'FAILED'
 STARTED = 'STARTED'
 RETRY = 'RETRY'
+LOST_WORKER = 'LOST WORKER'
 
 VISIBILITY_TIMEOUT = 5 * (60*60)
 MAXIMUM_VISIBILITY_TIMEOUT = 7 * ((60 * 60) * 24)
@@ -239,6 +240,25 @@ class MainPawWorker:
         :param sleep_for: Seconds to sleep for after a loop end.
         """
         self.queue_service.create_queue(self.queue_name)
+
+        try:
+            self.logger.info("Cleaning up dead jobs left in {}".format(STARTED))
+            dead_jobs = self.table_service.query_entities(
+                table_name=self.table_name,
+                filter="status eq '{}'".format(STARTED)
+            )
+            for job in dead_jobs.items:
+                log_to_table(
+                    table_service=self.table_service,
+                    table_name=self.table_name,
+                    task_name=job.PartitionKey,
+                    status=LOST_WORKER,
+                    job_id=job.RowKey,
+                    result="Lost worker, or task aborted."
+                )
+
+        except AzureException as e:
+            self.logger.error("Cleaning dead tasks failed: {}".format(e))
 
         while True:
             if not self.local_queue.full():
