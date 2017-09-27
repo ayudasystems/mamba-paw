@@ -90,9 +90,8 @@ class Worker(Process):
                 log_to_table(
                     table_service=self.table_service,
                     table_name=self.table_name,
-                    task_name=content['task_name'],
+                    message=content,
                     status=FAILED,
-                    job_id=content['job_id'],
                     result=None,
                     exception='{} is not a registered task.'.format(
                         content['task_name']),
@@ -104,9 +103,8 @@ class Worker(Process):
             log_to_table(
                 table_service=self.table_service,
                 table_name=self.table_name,
-                task_name=content['task_name'],
+                message=content,
                 status=STARTED,
-                job_id=content['job_id'],
                 result=None,
                 exception=None,
                 create=True
@@ -123,8 +121,9 @@ class Worker(Process):
                     result = func(**content['kwargs'])
                 else:
                     result = func()
-            except Exception:
-                exception = traceback.format_exc()
+            except Exception as e:
+                # exception = traceback.format_exc()
+                exception = e
             finally:
                 if exception:
                     status = FAILED
@@ -134,9 +133,8 @@ class Worker(Process):
                 log_to_table(
                     table_service=self.table_service,
                     table_name=self.table_name,
-                    task_name=content['task_name'],
+                    message=content,
                     status=status,
-                    job_id=content['job_id'],
                     result=result,
                     exception=exception
                 )
@@ -253,9 +251,8 @@ class MainPawWorker:
                 log_to_table(
                     table_service=self.table_service,
                     table_name=self.table_name,
-                    task_name=job.PartitionKey,
+                    message=job,
                     status=LOST_WORKER,
-                    job_id=job.RowKey,
                     result="Lost worker, or task aborted."
                 )
 
@@ -303,9 +300,8 @@ class MainPawWorker:
                         log_to_table(
                             table_service=self.table_service,
                             table_name=self.table_name,
-                            task_name=content['task_name'],
+                            message=content,
                             status=FAILED,
-                            job_id=content['job_id'],
                             result="PAW MESSAGE: Dequeue count exceeded.",
                         )
                         self.queue_service.delete_message(

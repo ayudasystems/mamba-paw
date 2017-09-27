@@ -6,6 +6,7 @@ import string
 import time
 import traceback
 import uuid
+from json import JSONDecodeError
 
 # noinspection PyPackageRequirements
 from azure.common import AzureException, AzureHttpError
@@ -41,6 +42,16 @@ PAW_LOGO = """
           '--'
 """
 
+DEFAULT_TABLE_COLUMNS = (
+    'PartitionKey',
+    'RowKey',
+    'Timestamp',
+    'dequeue_time',
+    'result',
+    'status',
+    'exception',
+)
+
 
 def create_table_if_missing(table_service, table_name):
     while True:
@@ -52,16 +63,15 @@ def create_table_if_missing(table_service, table_name):
         time.sleep(2)
 
 
-def log_to_table(table_service, table_name, task_name, status, job_id,
-                 result=None, exception=None, create=False):
+def log_to_table(table_service, table_name, message, status, result=None,
+                 exception=None, create=False):
     """
     Logs to table service the status/result of a task
 
     :param table_service: azure.storage.table.TableService
     :param table_name: Name of the Azure table to use.
-    :param task_name: Name of the task to log result/status for.
+    :param message: Dict from Azure queue or azure.storage.table.Entity
     :param status: Status of the task. Ex: STARTED, FAILED etc...
-    :param job_id: UUID of the task.
     :param result: Result if any.
     :param exception: Exception, if any.
     :param create: Bool. Adds the created date. Used to keep it even after
@@ -69,8 +79,20 @@ def log_to_table(table_service, table_name, task_name, status, job_id,
     """
     create_table_if_missing(table_service, table_name)
     entity = Entity()
-    entity.PartitionKey = task_name
-    entity.RowKey = job_id
+    # To support both an Entity or message from queue
+    partition_key = message.get('task_name', message.get('PartitionKey'))
+    row_key = message.get('job_id', message.get('RowKey'))
+
+    if not partition_key or not row_key:
+        raise PawError('message did not contained all required information. '
+                       '"task_name" {}, "job_id" {}'.format(partition_key,
+                                                            row_key))
+
+    if message.get('additional_log'):
+        entity.update(message['additional_log'])
+
+    entity.PartitionKey = message['task_name']
+    entity.RowKey = message['job_id']
     entity.status = status
 
     if result:
@@ -91,11 +113,14 @@ def log_to_table(table_service, table_name, task_name, status, job_id,
             table_service.insert_or_merge_entity(table_name, entity)
             break
         except AzureException as e:
+            LOGGER.warning("Error from Azure table service: "
+                           "{}".format(traceback.format_exc()))
             retries -= 1
             if not retries:
+                LOGGER.error("Error from Azure table service: "
+                             "{}".format(traceback.format_exc()))
                 raise PawError(e)
-            LOGGER.error("Error from Azure table service: "
-                         "{}".format(traceback.format_exc()))
+
             time.sleep(2)
 
 
@@ -112,7 +137,7 @@ def task(description=''):
 
 
 def queue_task(task_name, account_name, account_key, queue_name, args=None,
-               kwargs=None, retries=30):
+               kwargs=None, retries=30, additional_log=None):
     """
     Sends messages into the Azure queue.
 
@@ -123,11 +148,32 @@ def queue_task(task_name, account_name, account_key, queue_name, args=None,
     :param args: List of arguments to pass to the task.
     :param kwargs: Dict of arguments to pass to the task
     :param retries: Int of how many times to retry. 1 second wait per try
+    :param additional_log: Dictionary with additional values to have logged
+                           in table. Key must not override:
+                           PartitionKey, RowKey, Timestamp, dequeue_time,
+                           result, exception and status.
+                           Also, it must be a dict that can be serialized
+                           to json, or an already serialized json string.
 
     :returns: Job ID for this task.
     """
     if args and kwargs:
         raise PawError("You can't pass both positional and keyword arguments")
+
+    # Testing additional_log if present. Converting to dict if received json
+    if additional_log:
+        try:
+            if isinstance(additional_log, dict):
+                json.dumps(additional_log)
+            else:
+                additional_log = json.loads(additional_log)
+        except (TypeError, JSONDecodeError) as e:
+            raise PawError(e)
+
+        if any([True for k in DEFAULT_TABLE_COLUMNS if
+                k in additional_log.keys()]):
+            raise PawError("Overlapping keys with default values. Reserved "
+                           "key names are {}".format(DEFAULT_TABLE_COLUMNS))
 
     queue_service = QueueService(account_name=account_name,
                                  account_key=account_key)
@@ -147,7 +193,8 @@ def queue_task(task_name, account_name, account_key, queue_name, args=None,
         "task_name": task_name,
         "args": args,
         "kwargs": kwargs,
-        "job_id": job_id
+        "job_id": job_id,
+        "additional_log": additional_log
     })
     queue_service.put_message(queue_name, content)
 
