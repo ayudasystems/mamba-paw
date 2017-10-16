@@ -7,6 +7,7 @@ import time
 import traceback
 import uuid
 from json import JSONDecodeError
+import sys
 
 # noinspection PyPackageRequirements
 from azure.common import AzureException, AzureHttpError
@@ -17,7 +18,19 @@ from azure.storage.table import EdmType, Entity, EntityProperty
 
 from .exceptions import PawError
 
-LOGGER = logging.getLogger(__name__)
+log_format = ('{levelname}: {asctime} PID:{process} {module}.{funcName} '
+              '@{lineno}: {message}')
+
+LOGGER = logging.getLogger('paw')
+
+LOGGER.setLevel(logging.INFO)
+formatter = logging.Formatter(log_format, style='{')
+console = logging.StreamHandler(sys.stdout)
+console.setFormatter(formatter)
+LOGGER.addHandler(console)
+LOGGER.propagate = False
+
+
 PAW_LOGO = """
 =======================
 = Python Azure Worker =
@@ -80,8 +93,8 @@ def log_to_table(table_service, table_name, message, status, result=None,
     create_table_if_missing(table_service, table_name)
     entity = Entity()
     # To support both an Entity or message from queue
-    partition_key = message.get('task_name', message.get('PartitionKey'))
-    row_key = message.get('job_id', message.get('RowKey'))
+    partition_key = message.get('task_name') or message.get('PartitionKey')
+    row_key = message.get('job_id') or message.get('RowKey')
 
     if not partition_key or not row_key:
         raise PawError('message did not contained all required information. '
@@ -91,8 +104,8 @@ def log_to_table(table_service, table_name, message, status, result=None,
     if message.get('additional_log'):
         entity.update(message['additional_log'])
 
-    entity.PartitionKey = message['task_name']
-    entity.RowKey = message['job_id']
+    entity.PartitionKey = partition_key
+    entity.RowKey = row_key
     entity.status = status
 
     if result:

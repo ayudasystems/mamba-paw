@@ -14,7 +14,7 @@ from azure.storage.queue import QueueService
 from azure.storage.table import TableService
 
 from .exceptions import PawError
-from .utils import PAW_LOGO, create_table_if_missing, log_to_table
+from .utils import PAW_LOGO, create_table_if_missing, log_to_table, LOGGER
 
 SUCCESS = 'SUCCESS'
 FAILED = 'FAILED'
@@ -48,7 +48,8 @@ class Worker(Process):
         self.queue_name = queue_name
         self.table_name = table_name
         self.tasks = tasks
-        self.logger = logger
+        # self.logger = logger
+        self.logger = LOGGER
 
     def run(self):
         """
@@ -136,7 +137,7 @@ class Worker(Process):
                     message=content,
                     status=status,
                     result=result,
-                    exception=exception
+                    exception=str(exception)
                 )
 
                 self.logger.debug(
@@ -198,7 +199,8 @@ class MainPawWorker:
         self.table_service = TableService(account_name=self.account_name,
                                           account_key=self.account_key)
         self.local_queue = Queue(self.workers)
-        self.logger = logging.getLogger()
+        # self.logger = logging.getLogger()
+        self.logger = LOGGER
 
         self.logger.info(PAW_LOGO)
 
