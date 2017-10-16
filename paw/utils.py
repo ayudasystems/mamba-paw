@@ -108,13 +108,16 @@ def log_to_table(table_service, table_name, message, status, result=None,
     entity.RowKey = row_key
     entity.status = status
 
+    #
+    # Added in this manner because Azure SDK's serializer fails
+    # when results are repr(list).
     if result:
-        # Results are added in this manner because Azure SDK's serializer fails
-        # when results are repr(list).
         # noinspection PyTypeChecker
         entity.result = EntityProperty(type=EdmType.STRING, value=repr(result))
-
-    entity.exception = exception
+    if exception:
+        # noinspection PyTypeChecker
+        entity.exception = EntityProperty(type=EdmType.STRING,
+                                          value=repr(exception))
 
     if create:
         entity.dequeue_time = datetime.datetime.utcnow()
