@@ -1,6 +1,7 @@
 import json
-import logging
 import os
+import signal
+import sys
 import time
 import traceback
 from inspect import getmembers, isfunction
@@ -14,7 +15,7 @@ from azure.storage.queue import QueueService
 from azure.storage.table import TableService
 
 from .exceptions import PawError
-from .utils import PAW_LOGO, create_table_if_missing, log_to_table, LOGGER
+from .utils import LOGGER, PAW_LOGO, create_table_if_missing, log_to_table
 
 SUCCESS = 'SUCCESS'
 FAILED = 'FAILED'
@@ -30,7 +31,7 @@ MAXIMUM_DEQUEUE_COUNT = 5
 class Worker(Process):
     """Process that get sent to the Pool and consumes from the Queue"""
     def __init__(self, local_queue, queue_service, queue_name,
-                 table_service, table_name, tasks, logger):
+                 table_service, table_name, tasks):
         """
         :param local_queue: multiprocessing.Queue
         :param queue_service: azure.storage.queue.QueueService
@@ -38,7 +39,6 @@ class Worker(Process):
         :param table_service: azure.storage.table.TableService
         :param table_name: Name of the Azure table to use
         :param tasks: Dict of tasks {"task_name": Function Object}
-        :param logger: Instantiated logger object
         """
         super(Worker, self).__init__()
 
@@ -48,7 +48,6 @@ class Worker(Process):
         self.queue_name = queue_name
         self.table_name = table_name
         self.tasks = tasks
-        # self.logger = logger
         self.logger = LOGGER
 
     def run(self):
@@ -211,9 +210,13 @@ class MainPawWorker:
             table_service=self.table_service,
             table_name=azure_table_name,
             tasks=self._load_tasks(),
-            logger=self.logger
         )
         self.pool = Pool(self.workers, self.worker_process.run, ())
+        signal.signal(signal.SIGTERM, self.on_exit)
+
+    def on_exit(self, signum, frame):
+        self.pool.terminate()
+        sys.exit()
 
     def _load_tasks(self):
         """
@@ -262,62 +265,59 @@ class MainPawWorker:
             self.logger.error("Cleaning dead tasks failed: {}".format(e))
 
         while True:
-            if not self.local_queue.full():
+            if self.local_queue.full():
+                time.sleep(sleep_for)
+
+            try:
+                new_msg = self.queue_service.get_messages(
+                    queue_name=self.queue_name,
+                    num_messages=1,
+                    visibility_timeout=self.visibility_timeout
+                )
+            except AzureException:
+                self.logger.error("Error while getting message "
+                                  "from Azure queue. Trying to create "
+                                  "the queue")
+                self.queue_service.create_queue(self.queue_name)
+                time.sleep(sleep_for)
+                continue
+
+            if new_msg:
+                msg = new_msg[0]
                 try:
-                    new_msg = self.queue_service.get_messages(
-                        queue_name=self.queue_name,
-                        num_messages=1,
-                        visibility_timeout=self.visibility_timeout
-                    )
-                except AzureException:
-                    self.logger.error("Error while getting message "
-                                      "from Azure queue. Trying to create "
-                                      "the queue")
-                    self.queue_service.create_queue(self.queue_name)
-                    time.sleep(sleep_for)
-                    continue
-
-                # TODO: Check if we could check in missing new_msg instead
-                if new_msg:
-                    msg = new_msg[0]
+                    content = json.loads(msg.content)
+                except json.JSONDecodeError:
+                    self.logger.critical(
+                        'Json error {}'.format(traceback.format_exc()))
                     try:
-                        content = json.loads(msg.content)
-                    except json.JSONDecodeError:
-                        self.logger.critical(
-                            'Json error {}'.format(traceback.format_exc()))
-                        try:
-                            self.queue_service.delete_message(
-                                queue_name=self.queue_name,
-                                message_id=msg.id,
-                                pop_receipt=msg.pop_receipt
-                            )
-                        except AzureException:
-                            self.logger.critical(
-                                'Deleting invalid message from queue failed: '
-                                '{}'.format(traceback.format_exc()))
-                        time.sleep(sleep_for)
-                        continue
-
-                    if msg.dequeue_count > MAXIMUM_DEQUEUE_COUNT:
-                        log_to_table(
-                            table_service=self.table_service,
-                            table_name=self.table_name,
-                            message=content,
-                            status=FAILED,
-                            result="PAW MESSAGE: Dequeue count exceeded.",
-                        )
                         self.queue_service.delete_message(
-                            self.queue_name,
-                            msg.id,
-                            msg.pop_receipt
+                            queue_name=self.queue_name,
+                            message_id=msg.id,
+                            pop_receipt=msg.pop_receipt
                         )
-                        continue
-
-                    content['msg'] = msg
-                    self.local_queue.put_nowait(content)
-                    self.logger.debug('ADDING: {}'.format(content['task_name']))
-
-                    # Skipping sleep on success
+                    except AzureException:
+                        self.logger.critical(
+                            'Deleting invalid message from queue failed: '
+                            '{}'.format(traceback.format_exc()))
                     continue
+
+                if msg.dequeue_count > MAXIMUM_DEQUEUE_COUNT:
+                    log_to_table(
+                        table_service=self.table_service,
+                        table_name=self.table_name,
+                        message=content,
+                        status=FAILED,
+                        result="PAW MESSAGE: Dequeue count exceeded.",
+                    )
+                    self.queue_service.delete_message(
+                        self.queue_name,
+                        msg.id,
+                        msg.pop_receipt
+                    )
+                    continue
+
+                content['msg'] = msg
+                self.local_queue.put_nowait(content)
+                self.logger.debug('ADDING: {}'.format(content['task_name']))
 
             time.sleep(sleep_for)

@@ -3,11 +3,11 @@ import json
 import logging
 import socket
 import string
+import sys
 import time
 import traceback
 import uuid
 from json import JSONDecodeError
-import sys
 
 # noinspection PyPackageRequirements
 from azure.common import AzureException, AzureHttpError
