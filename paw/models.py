@@ -6,6 +6,7 @@ import time
 import traceback
 from inspect import getmembers, isfunction
 from multiprocessing import Pool, Process, Queue
+from multiprocessing.queues import Full
 
 from azure.common import AzureException, AzureMissingResourceHttpError
 from azure.storage.queue import QueueService
@@ -314,7 +315,15 @@ class MainPawWorker:
                     continue
 
                 content['msg'] = msg
-                self.local_queue.put_nowait(content)
+                while True:
+                    try:
+                        self.local_queue.put_nowait(content)
+                        break
+                    except Full:
+                        self.logger.info(
+                            'LOCAL QUEUE FULL: waiting...')
+                        time.sleep(sleep_for)
+
                 self.logger.debug('ADDING: {}'.format(content['task_name']))
 
             time.sleep(sleep_for)
