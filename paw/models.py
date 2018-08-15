@@ -7,11 +7,8 @@ import traceback
 from inspect import getmembers, isfunction
 from multiprocessing import Pool, Process, Queue
 
-# noinspection PyPackageRequirements
 from azure.common import AzureException, AzureMissingResourceHttpError
-# noinspection PyPackageRequirements
 from azure.storage.queue import QueueService
-# noinspection PyPackageRequirements
 from azure.storage.table import TableService
 
 from .exceptions import PawError

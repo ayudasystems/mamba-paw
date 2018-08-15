@@ -18,7 +18,7 @@ with open(path.join(here, 'README.rst'), encoding='utf-8') as f:
 
 setup(
     name='mamba-paw',
-    version='0.3.1',
+    version='0.3.2',
     packages=['paw'],
     url='https://github.com/ayudasystems/mamba-paw',
     license='Apache 2.0',
@@ -26,7 +26,7 @@ setup(
     author_email='maxime@ayudasystems.com',
     description='Uses Azure storage queue/table for a simple worker',
     long_description=long_description,
-    install_requires=['azure-storage>==0.36.0'],
+    install_requires=['azure-storage>==0.36.0', 'azure-common>==1.1.11'],
     classifiers=[
         'Development Status :: 3 - Alpha',
         'Intended Audience :: Developers',
